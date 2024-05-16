@@ -1,0 +1,85 @@
+name: Deploy Terraform Templates
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: 'Cloud Provider (aws/azure/gcp)'
+        required: true
+      template:
+        description: 'Template Name'
+        required: true
+      project:
+        description: 'Customer Project Name'
+        required: true
+      region:
+        description: 'Deployment Region'
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: 1.18
+
+    - name: Configure AWS credentials
+      if: github.event.inputs.provider == 'aws'
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ github.event.inputs.region }}
+
+    - name: Configure Azure credentials
+      if: github.event.inputs.provider == 'azure'
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Configure GCP credentials
+      if: github.event.inputs.provider == 'gcp'
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Run Terraformpro
+      run: |
+        go run main.go \
+          --provider ${{ github.event.inputs.provider }} \
+          --template ${{ github.event.inputs.template }} \
+          --project ${{ github.event.inputs.project }} \
+          --region ${{ github.event.inputs.region }}
+
+    - name: Create customer repository
+      run: |
+        gh repo create ${{ github.repository_owner }}/catalog-${{ github.event.inputs.project }} \
+          --description "Terraform templates for ${{ github.event.inputs.project }}" \
+          --private \
+          --confirm
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Push Terraform templates to customer repository
+      run: |
+        cd projects/${{ github.event.inputs.project }}
+        git init
+        git add .
+        git commit -m "Initial commit"
+        git remote add origin https://github.com/${{ github.repository_owner }}/catalog-${{ github.event.inputs.project }}.git
+        git push -u origin main
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Initialize and deploy Terraform
+      run: |
+        cd projects/${{ github.event.inputs.project }}
+        terraform init
+        terraform apply -auto-approve
